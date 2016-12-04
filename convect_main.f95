@@ -11,16 +11,16 @@ program convect_main
 
 	use diffusion_2d
 	implicit none
-	real,allocatable :: init_temp(:,:),del2(:,:),vgrad(:,:),rhs(:,:),w(:,:),s(:,:)
+	real,allocatable :: init_temp(:,:),del2(:,:),vgrad(:,:),old_dtdx(:,:),w(:,:),s(:,:),vgrad_w(:,:),del2_w(:,:)
 	integer :: nx=3,ny=3,i,j,centerx,centery
 	character(len=50) :: outputfile_suffix,out_path,step_number,run_date,step_dir
 	character(len=:),allocatable :: formatted_out_path,formatted_run_date
-	real :: total_time,field_magnitude,diffusivity,dt,dt_dif,dt_adv,t,h,a_adv,a_dif,B,ra,placeholder
+	real :: total_time,field_magnitude,diffusivity,dt,dt_dif,dt_adv,t,h,a_adv,a_dif,B,ra,placeholder,pr
 	type(AdvectionGrid) :: this_advection_grid
 	real :: rms_f=0.0,rms_residue=0.0,error_threshhold=0
 
 	! Read in input parameters from a file
-	namelist /inputs/ nx,ny,total_time,diffusivity,a_dif,a_adv,ra,error_threshhold
+	namelist /inputs/ nx,ny,total_time,diffusivity,a_dif,a_adv,ra,pr,error_threshhold
 	open(1,file="convect_inputs.txt",status="old")
 	read(1,inputs)
 	close(1)
@@ -35,13 +35,20 @@ program convect_main
 	! Allocate various arrays T, phi, V
 	allocate(this_advection_grid%T(nx,ny),this_advection_grid%phi(nx,ny),this_advection_grid%v_x(nx,ny),this_advection_grid%v_y(nx,ny))
 	allocate(init_temp(nx,ny),del2(nx,ny),vgrad(nx,ny))
-	allocate(rhs(nx,ny),w(nx,ny),s(nx,ny))
+	allocate(old_dtdx(nx,ny),w(nx,ny),s(nx,ny))
+	allocate(this_advection_grid%w(nx,ny),del2_w(nx,ny),vgrad_w(nx,ny))
 
 	! Initialize values for velocity arrays
 	this_advection_grid%v_x = 0.0
 	this_advection_grid%v_y = 0.0
-
-
+	! Initialize omega 
+	! Populate T field with random signal between 0:1
+	this_advection_grid%w = 0.0
+	do i=1,size(this_advection_grid%w,1)
+		do j=1,size(this_advection_grid%w,2)
+			this_advection_grid%w(i,j) = rand()
+		end do
+	end do
 	! Set grid spacing (assuming dx = dy)
 	h = 1.0/(float(ny)-1.0)
 	this_advection_grid%h = h
@@ -77,40 +84,16 @@ program convect_main
 		print*,"Percent Complete:",(t/total_time)*100,"%"
 
 		!! Populate Stream Function
-		!------------------------------------!	
-		! Calc righthand side
-		rhs=0.0
-		call x_deriv_2D(this_advection_grid%T,rhs,this_advection_grid%h)
-		rhs = rhs*this_advection_grid%ra
-
-		! Set BC for RHS
-		rhs(1,:) = 0.0
-		rhs(this_advection_grid%nx,:) = 0.0
-
-		!------------------------------------!
-		! Solve for w
-		w = 0.0
-		! Get rms of the function
-		rms_f = 0.0 ! Clearing variable for debugging
-		rms_f = rms_2D(rhs)
-
-		! Initialize rms_residue as being higher than function to make 
-		! the while loop run
-		rms_residue = rms_f*2.0
-		do while (rms_residue/rms_f>error_threshhold)
-			rms_residue = Vcycle_2DPoisson(w,rhs,this_advection_grid%h)
-		end do
-
 		!------------------------------------!
 		! Solve s/phi (streamfunction)
 		s = 0.0
 		! Get rms of the function
 		rms_f = 0.0
-		rms_f = rms_2D(w)
+		rms_f = rms_2D(this_advection_grid%w)
 		rms_residue = rms_f*2.0
 
 		do while (rms_residue/rms_f>error_threshhold)
-			rms_residue = Vcycle_2DPoisson(s,w,this_advection_grid%h)
+			rms_residue = Vcycle_2DPoisson(s,this_advection_grid%w,this_advection_grid%h)
 		end do
 		!------------------------------------!	
 
@@ -134,13 +117,48 @@ program convect_main
 		vgrad = 0.0
 		call v_grad(this_advection_grid,vgrad)
 		
+		! Get terms for calculating dW
+		del2_w = 0.0
+		vgrad_w = 0.0
+		del2_w = del_squared_2d(this_advection_grid%w,h)
+		call v_grad_w(this_advection_grid,vgrad_w)
+
+		! Calc dtDx for w time step
+		old_dtdx=0.0
+		call x_deriv_2D(this_advection_grid%T,old_dtdx,this_advection_grid%h)
+
+		! Set BC for dtdx
+		old_dtdx(1,:) = 0.0
+		old_dtdx(this_advection_grid%nx,:) = 0.0
+
 		!------------------------------------!	
 		! Get temperature at this time step
 		this_advection_grid%T = this_advection_grid%T + dt*((diffusivity*del2)-vgrad)
 
+		this_advection_grid%w = this_advection_grid%w + dt*(pr*del2_w - vgrad_w - ra*pr*old_dtdx)
+
+		! TODO get new w value at this time step
+
+
 		! Update boundaries
 		this_advection_grid%T(1,:) = this_advection_grid%T(2,:)
 		this_advection_grid%T(nx,:) = this_advection_grid%T(nx-1,:)
+
+
+		! DEBUGGING ONLY
+		! Write out final T
+		open(41,file='T_final.dat')
+		do i=1,size(this_advection_grid%T,1)
+			write(41,*),this_advection_grid%T(i,:)
+		end do
+		close(41)
+
+		! Write out final phi
+		open(41,file='phi.dat')
+		do i=1,size(this_advection_grid%phi,1)
+			write(41,*),this_advection_grid%phi(i,:)
+		end do
+		close(41)
 
 		! Increment time
 		t = t + dt
@@ -171,5 +189,5 @@ program convect_main
 
 	! Deallocate arrays
 	deallocate(this_advection_grid%T,this_advection_grid%phi,this_advection_grid%v_x,this_advection_grid%v_y,init_temp,del2,vgrad)
-	deallocate(rhs,w,s)
+	deallocate(old_dtdx,w,s)
 end program

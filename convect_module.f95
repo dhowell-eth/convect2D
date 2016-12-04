@@ -12,7 +12,7 @@ module diffusion_2d
 
 	type AdvectionGrid
 		integer :: nx, ny
-		real,allocatable :: T(:,:),phi(:,:),v_x(:,:),v_y(:,:)
+		real,allocatable :: T(:,:),phi(:,:),v_x(:,:),v_y(:,:),w(:,:)
 		real :: h,ra
 	end type AdvectionGrid
 
@@ -140,4 +140,29 @@ module diffusion_2d
 
 		end subroutine v_grad
 		!----------------------------------------------------------------------!
+
+		subroutine v_grad_w(advection_grid,output)
+			implicit none
+			integer :: i,j
+			type(AdvectionGrid):: advection_grid
+			real :: output(:,:),vx,vy,dWdx,dWdy
+
+			do i = 2,size(advection_grid%w,1)-1
+				do j =2,size(advection_grid%w,2)-1
+					vx = advection_grid%v_x(i,j)
+					vy = advection_grid%v_y(i,j)
+					if (vx>0) then
+						dWdx = (advection_grid%w(i,j)-advection_grid%w(i-1,j))/advection_grid%h
+					else
+						dWdx = (advection_grid%w(i+1,j)-advection_grid%w(i,j))/advection_grid%h
+					end if
+					if (vy>0) then
+						dWdy = (advection_grid%w(i,j)-advection_grid%w(i,j-1))/advection_grid%h
+					else
+						dWdy = (advection_grid%w(i,j+1)-advection_grid%w(i,j))/advection_grid%h
+					end if
+					output(i,j) = vx*dWdx + vy*dWdy
+				end do
+			end do
+		end subroutine v_grad_w
 end module diffusion_2d

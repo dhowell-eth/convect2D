@@ -6,4 +6,5 @@
 		a_adv=0.55
 		ra=100000.0
 		error_threshhold=0.001
+		pr=0.01
 /
