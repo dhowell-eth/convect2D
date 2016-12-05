@@ -1,5 +1,6 @@
 i = load('T_initial.dat');
 f = load('T_final.dat');
+full = load('T_field.dat')';
 i = i';
 f = f';
 phi = load('phi.dat');

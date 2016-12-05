@@ -18,9 +18,12 @@ program convect_main
 	real :: total_time,field_magnitude,diffusivity,dt,dt_dif,dt_adv,t,h,a_adv,a_dif,B,ra,placeholder,pr
 	type(AdvectionGrid) :: this_advection_grid
 	real :: rms_f=0.0,rms_residue=0.0,error_threshhold=0
+	integer :: iter_counter,num_frames
+	real :: dt_for_write
+	real, allocatable :: frame_times(:)
 
 	! Read in input parameters from a file
-	namelist /inputs/ nx,ny,total_time,diffusivity,a_dif,a_adv,ra,pr,error_threshhold
+	namelist /inputs/ nx,ny,total_time,diffusivity,a_dif,a_adv,ra,pr,error_threshhold,num_frames
 	open(1,file="convect_inputs.txt",status="old")
 	read(1,inputs)
 	close(1)
@@ -70,22 +73,65 @@ program convect_main
 	! Calculate diffusive dt (does not change with each iteration)
 	dt_dif = a_dif*(this_advection_grid%h**2)/diffusivity
 	
-	! Write out initial T field
-	open(41,file='T_initial.dat')
-	do i=1,size(this_advection_grid%T,1)
-		write(41,*),this_advection_grid%T(i,:)
+
+
+	! Figure out times to write out data
+	dt_for_write = total_time/num_frames
+	num_frames = num_frames-2.0
+	allocate(frame_times(num_frames))
+	do i=1,num_frames
+		frame_times(i) = dt_for_write*float(i)
 	end do
-	close(41)
 
 	!----------------------------------------------------------------------!
 	! Run simulation
+
 	t = 0.0
+	iter_counter = 1
+	!------------------------------------!
+	! Write out initial T and phi fields
+	open(42,file='T_field.dat')
+	do i=1,size(this_advection_grid%T,1)
+		write(42,*),t,this_advection_grid%T(i,:)
+	end do
+	open(43,file='phi_field.dat')
+	do i=1,size(this_advection_grid%phi,1)
+		write(43,*),t,this_advection_grid%phi(i,:)
+	end do
+	open(44,file='w_field.dat')
+	do i=1,size(this_advection_grid%w,1)
+		write(44,*),t,this_advection_grid%w(i,:)
+	end do
+	!------------------------------------!
+
+	print*,num_frames,frame_times
+
 	do
+		!------------------------------------!
+		! If this time is one you want in output file, write it.
+		if ((t >= frame_times(iter_counter)) .and. (iter_counter <= num_frames)) THEN
+			print*,"Writing..."
+			! Write out T with tine
+			do i=1,size(this_advection_grid%T,1)
+				write(42,*),t,this_advection_grid%T(i,:)
+			end do
+			do i=1,size(this_advection_grid%phi,1)
+				write(43,*),t,this_advection_grid%phi(i,:)
+			end do
+			do i=1,size(this_advection_grid%w,1)
+				write(44,*),t,this_advection_grid%w(i,:)
+			end do
+				iter_counter = iter_counter + 1
+		end if
+		!------------------------------------!
+
 		print*,"Percent Complete:",(t/total_time)*100,"%"
 
-		!! Populate Stream Function
+		!! --- Get inputs for solving for new T and W --- !!
+
 		!------------------------------------!
 		! Solve s/phi (streamfunction)
+
 		s = 0.0
 		! Get rms of the function
 		rms_f = 0.0
@@ -94,10 +140,11 @@ program convect_main
 
 		do while (rms_residue/rms_f>error_threshhold)
 			rms_residue = Vcycle_2DPoisson(s,this_advection_grid%w,this_advection_grid%h)
-		end do
-		!------------------------------------!	
+		end do	
 
+		!-----------------!
 		! Store streamfunction in grid
+
 		this_advection_grid%phi = s
 
 		! Set edge values for stream function
@@ -108,11 +155,15 @@ program convect_main
 		call set_boundary_conditions_2d(this_advection_grid%v_x,0.0)
 		call set_boundary_conditions_2d(this_advection_grid%v_y,0.0)
 
+		!-----------------!
 		! Figure out time_step using minimum of advective and diffusive time steps
+		
 		dt_adv = a_adv*MIN(h/MAXVAL(ABS(this_advection_grid%v_x)),h/MAXVAL(ABS(this_advection_grid%v_y)))
 		dt = MIN(dt_dif,dt_adv)
 
+		!-----------------!
 		! Get terms for calculating dT
+
 		del2 = del_squared_2d(this_advection_grid%T,h)
 		vgrad = 0.0
 		call v_grad(this_advection_grid,vgrad)
@@ -123,6 +174,8 @@ program convect_main
 		del2_w = del_squared_2d(this_advection_grid%w,h)
 		call v_grad_w(this_advection_grid,vgrad_w)
 
+		!-----------------!
+
 		! Calc dtDx for w time step
 		old_dtdx=0.0
 		call x_deriv_2D(this_advection_grid%T,old_dtdx,this_advection_grid%h)
@@ -132,33 +185,17 @@ program convect_main
 		old_dtdx(this_advection_grid%nx,:) = 0.0
 
 		!------------------------------------!	
+		! Solve for new T and w
+
 		! Get temperature at this time step
 		this_advection_grid%T = this_advection_grid%T + dt*((diffusivity*del2)-vgrad)
 
 		this_advection_grid%w = this_advection_grid%w + dt*(pr*del2_w - vgrad_w - ra*pr*old_dtdx)
 
-		! TODO get new w value at this time step
-
-
 		! Update boundaries
 		this_advection_grid%T(1,:) = this_advection_grid%T(2,:)
 		this_advection_grid%T(nx,:) = this_advection_grid%T(nx-1,:)
-
-
-		! DEBUGGING ONLY
-		! Write out final T
-		open(41,file='T_final.dat')
-		do i=1,size(this_advection_grid%T,1)
-			write(41,*),this_advection_grid%T(i,:)
-		end do
-		close(41)
-
-		! Write out final phi
-		open(41,file='phi.dat')
-		do i=1,size(this_advection_grid%phi,1)
-			write(41,*),this_advection_grid%phi(i,:)
-		end do
-		close(41)
+		!------------------------------------!
 
 		! Increment time
 		t = t + dt
@@ -169,19 +206,19 @@ program convect_main
 	end do
 	!----------------------------------------------------------------------!
 
-	! Write out final T
-	open(41,file='T_final.dat')
+	! Write out final T and phi
 	do i=1,size(this_advection_grid%T,1)
-		write(41,*),this_advection_grid%T(i,:)
+		write(42,*),t,this_advection_grid%T(i,:)
 	end do
-	close(41)
-
-	! Write out final phi
-	open(41,file='phi.dat')
+	close(42)
 	do i=1,size(this_advection_grid%phi,1)
-		write(41,*),this_advection_grid%phi(i,:)
+		write(43,*),t,this_advection_grid%phi(i,:)
 	end do
-	close(41)
+	close(43)
+	do i=1,size(this_advection_grid%w,1)
+		write(44,*),t,this_advection_grid%w(i,:)
+	end do
+	close(44)
 
 	! Print exit message
 	print*,"Run complete!"
@@ -189,5 +226,5 @@ program convect_main
 
 	! Deallocate arrays
 	deallocate(this_advection_grid%T,this_advection_grid%phi,this_advection_grid%v_x,this_advection_grid%v_y,init_temp,del2,vgrad)
-	deallocate(old_dtdx,w,s)
+	deallocate(old_dtdx,w,s,frame_times)
 end program
