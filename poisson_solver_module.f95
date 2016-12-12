@@ -2,27 +2,30 @@ module poissonSolver
 
   CONTAINS
 
-  function iteration_2DPoisson(u,f,h,alpha) result(rms_residue)
+  function iteration_2DPoisson(u,f,h,alpha,c) result(rms_residue)
     implicit none
     real,intent(inout) :: u(:,:)
-    real,intent(in) :: f(:,:),h,alpha
-    real :: res_terms=0.0,indv_residue=0.0,rms_residue
+    real,intent(in) :: f(:,:),h,alpha,c
+    real :: res_terms,indv_residue,rms_residue
     integer :: i,j
     real :: del2_u,nx,ny
     real :: min_res,max_res
     real,allocatable :: test_d2u(:,:)
+    ! Reset terms b/c of multiple function calls
+    res_terms = 0.0
+    indv_residue = 0.0
     ! Calculate Current Residue
       do i=2,size(u,1)-1
         do j=2,size(u,2)-1
           ! For each point:
           ! Get finite diff approximation
 
-          del2_u = (u(i-1,j) + u(i+1,j)+ u(i,j-1)+u(i,j+1)-(4.0*u(i,j)))/(h**2.0)
+          del2_u = (u(i-1,j) + u(i+1,j)+ u(i,j-1)+u(i,j+1)-((4.0+c*(h**2.0))*u(i,j)))/(h**2.0)
           ! Calculate residue 
           indv_residue = del2_u-f(i,j)
           
           ! Update u with new estimate
-          u(i,j) = u(i,j)+(alpha*indv_residue*((h**2.0)/4.0))
+          u(i,j) = u(i,j)+(alpha*indv_residue*((h**2.0)/(4.0+c*h**2.0)))
 
           ! Store residue term for RMS calculation
           res_terms = res_terms + (indv_residue**2.0)
@@ -38,6 +41,8 @@ module poissonSolver
     ! Reset terms b/c of multiple function calls
     res_terms = 0.0
     indv_residue = 0.0
+
+
 
   end function iteration_2DPoisson
 
@@ -63,15 +68,15 @@ function rms_2D(a) result(rms)
   running_total=0.0
 end function rms_2D
 
-  subroutine residue_2DPoisson(u,f,h,res)
+  subroutine residue_2DPoisson(u,f,h,res,c)
       implicit none
-      real, intent(in) :: u(:,:),f(:,:),h
+      real, intent(in) :: u(:,:),f(:,:),h,c
       real, intent(inout) :: res(:,:)
       integer :: i,j
       real :: del2_u
       do i=2,size(u,1)-1
         do j=2,size(u,2)-1
-          del2_u = (1/h**2.0)*(u(i,j+1)+u(i,j-1)+u(i+1,j)+u(i-1,j)-4.0*u(i,j))
+          del2_u = (1/h**2.0) * ( u(i,j+1) + u(i,j-1) + u(i+1,j) + u(i-1,j) - ((4.0+c*(h**2.0))*u(i,j)) )
           res(i,j) = del2_u-f(i,j)
         end do
       end do
@@ -125,11 +130,12 @@ subroutine prolongate(coarse,fine)
     end do
 end subroutine prolongate
 
-  recursive function Vcycle_2DPoisson(u_f,rhs,h) result (resV)
+  recursive function Vcycle_2DPoisson(u_f,rhs,h,c,use_temp_bc) result (resV)
     implicit none
     real resV
     real,intent(inout):: u_f(:,:)  ! arguments
-    real,intent(in)   :: rhs(:,:),h
+    real,intent(in)   :: rhs(:,:),h,c
+    logical ,intent(in) :: use_temp_bc
     integer         :: nx,ny,nxc,nyc, i,j  ! local variables
     real,allocatable:: res_c(:,:),corr_c(:,:),res_f(:,:),corr_f(:,:)
     real            :: alpha=0.7, res_rms
@@ -137,32 +143,40 @@ end subroutine prolongate
     nx=size(u_f,1); ny=size(u_f,2)  ! must be power of 2 plus 1
     nxc=1+(nx-1)/2; nyc=1+(ny-1)/2  ! coarse grid size
 
+    !print*,"Inside function (c):",c
+
     if (min(nx,ny)>5) then  ! not the coarsest level
 
        allocate(res_f(nx,ny),corr_f(nx,ny), &
             corr_c(nxc,nyc),res_c(nxc,nyc))
 
        !---------- take 2 iterations on the fine grid--------------
-       res_rms = iteration_2DPoisson(u_f,rhs,h,alpha) 
-       res_rms = iteration_2DPoisson(u_f,rhs,h,alpha)
-
+       res_rms = iteration_2DPoisson(u_f,rhs,h,alpha,c) 
+       res_rms = iteration_2DPoisson(u_f,rhs,h,alpha,c)
+        !print*,"First two iters: ",res_rms
        !---------- restrict the residue to the coarse grid --------
-       call residue_2DPoisson(u_f,rhs,h,res_f) 
+       call residue_2DPoisson(u_f,rhs,h,res_f,c) 
        call restrict(res_f,res_c)
 
        !---------- solve for the coarse grid correction -----------
        corr_c = 0.  
-       res_rms = Vcycle_2DPoisson(corr_c,res_c,h*2) ! *RECURSIVE CALL*
+       res_rms = Vcycle_2DPoisson(corr_c,res_c,h*2,c,use_temp_bc) ! *RECURSIVE CALL*
 
        !---- prolongate (interpolate) the correction to the fine grid 
        call prolongate(corr_c,corr_f)
-
+       ! If switch is set, apply non-zero boundary conditions
+       if (use_temp_bc) corr_f(:,1) = 1.0
        !---------- correct the fine-grid solution -----------------
+
+       !print*,"corr_c:",MAXVAL(corr_c)
+       !print*,res_rms
+       !print*,"corr_f:",maxval(corr_f)
        u_f = u_f - corr_f  
 
+
        !---------- two more smoothing iterations on the fine grid---
-       res_rms = iteration_2DPoisson(u_f,rhs,h,alpha)
-       res_rms = iteration_2DPoisson(u_f,rhs,h,alpha)
+       res_rms = iteration_2DPoisson(u_f,rhs,h,alpha,c)
+       res_rms = iteration_2DPoisson(u_f,rhs,h,alpha,c)
 
        deallocate(res_f,corr_f,res_c,corr_c)
 
@@ -171,7 +185,7 @@ end subroutine prolongate
        !----- coarsest level (ny=5): iterate to get 'exact' solution
 
        do i = 1,100
-          res_rms = iteration_2DPoisson(u_f,rhs,h,alpha)
+          res_rms = iteration_2DPoisson(u_f,rhs,h,alpha,c)
        end do
 
     end if

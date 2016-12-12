@@ -3,9 +3,10 @@
 		total_time=0.1
 		a_dif=0.1
 		a_adv=0.4
-		ra=1e7
-		pr=0.1
+		ra=1e5
+		pr=1.0
 		diffusivity=1.0
 		error_threshhold=0.001
 		num_frames=20
+		beta=0.5
 /

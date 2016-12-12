@@ -7,9 +7,9 @@ main_title = 'Pr=0.1; Ra=1e7';
 %%%%%
 
 
-full = load('5/T_field.dat');
-full_phi = load('5/phi_field.dat');
-full_w = load('5/w_field.dat');
+full = load('./T_field.dat');
+full_phi = load('./phi_field.dat');
+full_w = load('./w_field.dat');
 
 
 
