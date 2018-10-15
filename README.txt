@@ -1,7 +1,10 @@
-! Written By: Dorran Howell
-! 11/21/2016
-! Numerical Modeling in Fortran
-! HW 7
+Written By: Dorran Howell
+11/21/2016
+Numerical Modeling in Fortran
+HW 7
+
+This package runs a thermal convection model in 2D. In this exercise, one of the goals was to test the numerical stability of the model code for variety of input values. The run_test_cases.py python script executes the compiled Fortran code for a variety of inputs.
+
 
 
 Note on compiling:

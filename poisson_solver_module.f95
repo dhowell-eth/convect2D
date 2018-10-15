@@ -1,5 +1,6 @@
 module poissonSolver
-
+  ! Model with various subroutines used in the "convect" model
+  
   CONTAINS
 
   function iteration_2DPoisson(u,f,h,alpha,c) result(rms_residue)
